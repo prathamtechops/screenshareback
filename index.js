@@ -1,79 +1,69 @@
+// server.js
 const express = require("express");
 const http = require("http");
 const socketIO = require("socket.io");
 const cors = require("cors");
 
 const app = express();
-app.use(cors());
 const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://localhost:3001"],
-    methods: ["GET", "POST"],
+    origin: "*",
   },
 });
 
-const connectedUsers = {};
+app.use(cors());
+
+let connectedUsers = [];
+const peerConnections = {};
+
+const updateConnectedUsers = () => {
+  io.emit("connectedUsersUpdate", connectedUsers);
+};
 
 io.on("connection", (socket) => {
-  console.log(`Socket connected: ${socket.id}`);
+  console.log("User connected:", socket.id);
+  connectedUsers.push(socket.id);
+  updateConnectedUsers();
 
-  socket.on("userConnect", (userData) => {
-    console.log(`User connected: ${userData.userId}`);
-    connectedUsers[socket.id] = { ...userData, socketId: socket.id };
-    io.emit("userConnected", userData);
-    socket.broadcast.emit("userConnected", userData);
+  socket.on("startScreenShare", () => {
+    console.log(`User ${socket.id} wants to start screen sharing`);
+    io.emit("userStartedScreenShare", socket.id);
   });
 
-  socket.on("userDisconnect", (userId) => {
-    console.log(`User disconnected: ${userId}`);
-    const userData = connectedUsers[socket.id];
-    if (userData) {
-      delete connectedUsers[socket.id];
-      io.emit("userDisconnected", userData?.userId);
-      socket.broadcast.emit("userDisconnected", userData?.userId);
-    }
-  });
-
-  socket.on("sdp", (data) => {
-    console.log(`SDP received from ${socket.id} to ${data.userId}`);
-    const targetSocket = connectedUsers[data.userId];
-    if (targetSocket) {
-      io.to(targetSocket.socketId).emit("sdp", {
-        sdp: data.sdp,
-        userId: socket.id,
-      });
-    } else {
-      console.log(`User not found for SDP: ${data.userId}`);
-    }
+  socket.on("stopScreenShare", () => {
+    console.log(`User ${socket.id} stopped screen sharing`);
+    io.emit("userStoppedScreenShare", socket.id);
   });
 
   socket.on("iceCandidate", (data) => {
-    console.log(`ICE Candidate received from ${socket.id} to ${data.userId}`);
-    const targetSocket = connectedUsers[data.userId];
-    if (targetSocket) {
-      io.to(targetSocket.socketId).emit("iceCandidate", {
-        candidate: data.candidate,
-        userId: socket.id,
-      });
-    } else {
-      console.log(`User not found for ICE Candidate: ${data.userId}`);
-    }
+    console.log(`Received ICE candidate from user ${socket.id}`);
+    io.emit("adminIceCandidate", { id: socket.id, candidate: data });
+  });
+
+  socket.on("offer", (data) => {
+    console.log(`Received offer from user ${socket.id}`);
+    io.emit("adminOffer", { id: socket.id, offer: data });
+  });
+
+  socket.on("answer", (data) => {
+    console.log(`Received answer from user ${socket.id}`);
+    io.emit("adminAnswer", { id: socket.id, answer: data });
   });
 
   socket.on("disconnect", () => {
-    console.log(`Socket disconnected: ${socket.id}`);
-    const userData = connectedUsers[socket.id];
-    if (userData) {
-      delete connectedUsers[socket.id];
-      io.emit("userDisconnected", userData?.userId);
-      socket.broadcast.emit("userDisconnected", userData?.userId);
+    console.log(`User disconnected: ${socket.id}`);
+    connectedUsers = connectedUsers.filter((id) => id !== socket.id);
+    updateConnectedUsers();
+
+    // Clean up peer connection for the disconnected user
+    if (peerConnections[socket.id]) {
+      peerConnections[socket.id].close();
+      delete peerConnections[socket.id];
     }
   });
 });
 
-const PORT = process.env.PORT || 5000;
-
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+server.listen(5000, () => {
+  console.log("Server running on http://localhost:5000");
 });
