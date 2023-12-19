@@ -1,79 +1,73 @@
 const express = require("express");
 const http = require("http");
-const socketIO = require("socket.io");
-const cors = require("cors");
+const socketIo = require("socket.io");
 
 const app = express();
-app.use(cors());
 const server = http.createServer(app);
-const io = socketIO(server, {
+const io = socketIo(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://localhost:3001"],
-    methods: ["GET", "POST"],
+    origin: "*",
   },
 });
 
-const connectedUsers = {};
+const rooms = {};
+const ROOM_ID = "constantRoomId"; // Replace 'constantRoomId' with your actual constant room ID
 
 io.on("connection", (socket) => {
-  console.log(`Socket connected: ${socket.id}`);
+  console.log("User connected: ", socket.id);
 
-  socket.on("userConnect", (userData) => {
-    console.log(`User connected: ${userData.userId}`);
-    connectedUsers[socket.id] = { ...userData, socketId: socket.id };
-    io.emit("userConnected", userData);
-    socket.broadcast.emit("userConnected", userData);
-  });
-
-  socket.on("userDisconnect", (userId) => {
-    console.log(`User disconnected: ${userId}`);
-    const userData = connectedUsers[socket.id];
-    if (userData) {
-      delete connectedUsers[socket.id];
-      io.emit("userDisconnected", userData?.userId);
-      socket.broadcast.emit("userDisconnected", userData?.userId);
+  socket.on("offer", (data) => {
+    console.log("offer event received: ", data);
+    const targetSocketId = rooms[ROOM_ID] && rooms[ROOM_ID].admin;
+    if (targetSocketId) {
+      io.to(targetSocketId).emit("offer", data);
+    } else {
+      console.log("Admin not found for room: ", ROOM_ID);
     }
   });
 
-  socket.on("sdp", (data) => {
-    console.log(`SDP received from ${socket.id} to ${data.userId}`);
-    const targetSocket = connectedUsers[data.userId];
-    if (targetSocket) {
-      io.to(targetSocket.socketId).emit("sdp", {
-        sdp: data.sdp,
-        userId: socket.id,
-      });
-    } else {
-      console.log(`User not found for SDP: ${data.userId}`);
-    }
+  socket.on("answer", (data) => {
+    console.log("answer event received: ", data);
+    socket.to(ROOM_ID).emit("answer", data);
   });
 
-  socket.on("iceCandidate", (data) => {
-    console.log(`ICE Candidate received from ${socket.id} to ${data.userId}`);
-    const targetSocket = connectedUsers[data.userId];
-    if (targetSocket) {
-      io.to(targetSocket.socketId).emit("iceCandidate", {
-        candidate: data.candidate,
-        userId: socket.id,
-      });
+  socket.on("ice-candidate", (data) => {
+    console.log("ice-candidate event received: ", data);
+    socket.to(ROOM_ID).emit("ice-candidate", data);
+    console.log("Emitted ice-candidate event");
+  });
+
+  socket.on("join-room", () => {
+    console.log("join-room event received: ", ROOM_ID);
+    socket.join(ROOM_ID);
+    console.log("Joined room: ", ROOM_ID);
+    if (!rooms[ROOM_ID]) {
+      rooms[ROOM_ID] = { admin: socket.id, user: null };
+      console.log("Created new room: ", ROOM_ID);
     } else {
-      console.log(`User not found for ICE Candidate: ${data.userId}`);
+      rooms[ROOM_ID].user = socket.id;
+      console.log("User joined room: ", ROOM_ID);
+      io.to(rooms[ROOM_ID].admin).emit("user-connected", socket.id);
+      console.log("Emitted user-connected event");
     }
   });
 
   socket.on("disconnect", () => {
-    console.log(`Socket disconnected: ${socket.id}`);
-    const userData = connectedUsers[socket.id];
-    if (userData) {
-      delete connectedUsers[socket.id];
-      io.emit("userDisconnected", userData?.userId);
-      socket.broadcast.emit("userDisconnected", userData?.userId);
+    console.log("user disconnected: ", socket.id);
+    if (rooms[ROOM_ID]) {
+      // Check if the room exists
+      console.log("Room exists: ", ROOM_ID);
+      if (rooms[ROOM_ID].admin === socket.id) {
+        delete rooms[ROOM_ID];
+        console.log("Admin disconnected, deleted room: ", ROOM_ID);
+      } else if (rooms[ROOM_ID].user === socket.id) {
+        rooms[ROOM_ID].user = null;
+        console.log("User disconnected, room still exists: ", ROOM_ID);
+      }
     }
   });
 });
 
-const PORT = process.env.PORT || 5000;
-
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+server.listen(5000, () => {
+  console.log("Server listening on port 5000");
 });
