@@ -1,4 +1,3 @@
-// server.js
 const express = require("express");
 const http = require("http");
 const socketIo = require("socket.io");
@@ -7,68 +6,73 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "*",
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://localhost:3002",
+    ],
+    methods: ["GET", "POST"],
   },
 });
 
-const rooms = {};
-const ROOM_ID = "constantRoomId"; // Replace 'constantRoomId' with your actual constant room ID
+const connectedPeers = new Map();
 
 io.on("connection", (socket) => {
-  console.log("User connected: ", socket.id);
-
-  socket.on("offer", (data) => {
-    console.log("offer event received: ", data);
-    const targetSocketId = rooms[ROOM_ID] && rooms[ROOM_ID].admin;
-    if (targetSocketId) {
-      io.to(targetSocketId).emit("offer", data);
-    } else {
-      console.log("Admin not found for room: ", ROOM_ID);
-    }
-  });
-
-  socket.on("answer", (data) => {
-    console.log("answer event received: ", data);
-    socket.to(ROOM_ID).emit("answer", data);
-  });
-
-  socket.on("ice-candidate", (data) => {
-    console.log("ice-candidate event received: ", data);
-    socket.to(ROOM_ID).emit("ice-candidate", data);
-    console.log("Emitted ice-candidate event");
-  });
-
-  socket.on("join-room", () => {
-    console.log("join-room event received: ", ROOM_ID);
-    socket.join(ROOM_ID);
-    console.log("Joined room: ", ROOM_ID);
-    if (!rooms[ROOM_ID]) {
-      rooms[ROOM_ID] = { admin: socket.id, user: null };
-      console.log("Created new room: ", ROOM_ID);
-    } else {
-      rooms[ROOM_ID].user = socket.id;
-      console.log("User joined room: ", ROOM_ID);
-      io.to(rooms[ROOM_ID].admin).emit("user-connected", socket.id);
-      console.log("Emitted user-connected event");
-    }
-  });
+  console.log("Connected: " + socket.id);
+  connectedPeers.set(socket.id, socket);
 
   socket.on("disconnect", () => {
-    console.log("user disconnected: ", socket.id);
-    if (rooms[ROOM_ID]) {
-      // Check if the room exists
-      console.log("Room exists: ", ROOM_ID);
-      if (rooms[ROOM_ID].admin === socket.id) {
-        delete rooms[ROOM_ID];
-        console.log("Admin disconnected, deleted room: ", ROOM_ID);
-      } else if (rooms[ROOM_ID].user === socket.id) {
-        rooms[ROOM_ID].user = null;
-        console.log("User disconnected, room still exists: ", ROOM_ID);
+    console.log("Disconnected: " + socket.id);
+    connectedPeers.delete(socket.id);
+  });
+
+  socket.on("send-offer-to-admin", (offer, fromId) => {
+    console.log("User: Sending offer to admin");
+    setTimeout(() => {
+      for (const [id, socketPeer] of connectedPeers.entries()) {
+        if (id !== socket.id) {
+          console.log("Server: Sending offer from user to admin");
+          socketPeer.emit("offer-from-user", offer, fromId);
+        }
       }
+    }, 2000); // delay the emission of the offer-from-user event by 2 seconds
+  });
+
+  socket.on("send-answer-to-user", (answer, toId, fromId) => {
+    console.log("Admin: Sending answer to user");
+    const socketPeer = connectedPeers.get(toId);
+    if (socketPeer) {
+      console.log("Server: Sending answer from admin to user");
+      socketPeer.emit("answer-from-admin", answer, fromId);
+    } else {
+      console.error("No peer found with ID:", toId);
+    }
+  });
+
+  socket.on("send-ice-candidate-to-admin", (candidate, fromId) => {
+    console.log("User: Sending ICE candidate to admin");
+    for (const [id, socketPeer] of connectedPeers.entries()) {
+      if (id !== socket.id) {
+        console.log("Server: Sending ICE candidate from user to admin");
+        socketPeer.emit("ice-candidate-from-user", candidate, fromId);
+      }
+    }
+  });
+
+  socket.on("send-ice-candidate-to-user", (candidate, toId, fromId) => {
+    console.log("Admin: Sending ICE candidate to user");
+    const socketPeer = connectedPeers.get(toId);
+    if (socketPeer) {
+      console.log("Server: Sending ICE candidate from admin to user");
+      socketPeer.emit("ice-candidate-from-admin", candidate, fromId);
+    } else {
+      console.error("No peer found with ID:", toId);
     }
   });
 });
 
-server.listen(5000, () => {
-  console.log("Server listening on port 5000");
+const PORT = 5000;
+
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
